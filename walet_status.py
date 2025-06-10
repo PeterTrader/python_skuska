@@ -7,6 +7,8 @@ from datetime import datetime
 import csv
 import os
 
+print("PYTHON:", sys.executable)
+
 api_config = configparser.ConfigParser()
 api_config.read('api.cfg')
 
