@@ -2,10 +2,24 @@ import os
 import csv
 import configparser
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
+import shutil
 
-# Nastavenie ciest a botov (prispôsob podľa reálneho nasadenia)
+# ===================== KONFIGURÁCIA PRAVIDIEL =====================
+# Pravidlá optimalizácie pre každý bot (možno rozšíriť o ďalšie parametre)
+OPT_RULES = {
+    'PROFIT_LEVELS_HIGH': {
+        'profit_threshold': 0,      # Akýkoľvek rast portfólia
+        'increase_pct': 10,        # O koľko percent zvýšiť pri raste
+        'decrease_pct': 10,        # O koľko percent znížiť pri poklese
+        'min_value': 0.001,        # Minimálna povolená hodnota
+        'max_value': 1.0           # Maximálna povolená hodnota
+    },
+    # Pridaj ďalšie parametre podľa potreby
+}
+
+# ===================== NASTAVENIE BOTOV =====================
 BOTS = {
     "bot1": {
         "host": "34.146.103.137",
@@ -17,31 +31,16 @@ BOTS = {
     # Pridaj ďalšie boty podľa potreby
 }
 
-# Príklad: vyhodnotí najvyšší total_usdc z logu
-def get_best_profit(csv_file):
-    best_profit = -float('inf')
-    with open(csv_file, newline='') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                profit = float(row['total_usdc'])
-                if profit > best_profit:
-                    best_profit = profit
-            except Exception:
-                continue
-    return best_profit
-
-def update_cfg(cfg_file, new_profit_levels):
-    config = configparser.ConfigParser()
-    config.read(cfg_file)
-    config['BOT']['PROFIT_LEVELS_HIGH'] = new_profit_levels
-    with open(cfg_file, 'w') as f:
-        config.write(f)
-
+# ===================== LOGOVANIE =====================
 def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
     sys.stdout.flush()
 
+def log_change(bot, param, old_value, new_value, csv_file, reason):
+    with open("optimizer_changes.log", "a") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] bot: {bot} | param: {param} | pôvodné: {old_value} | nové: {new_value} | zdroj logu: {csv_file} | dôvod: {reason}\n")
+
+# ===================== NÁSTROJE =====================
 def is_service_active(host, user, service):
     res = subprocess.run([
         "ssh",
@@ -50,12 +49,16 @@ def is_service_active(host, user, service):
     ], capture_output=True, text=True)
     return res.returncode == 0 and res.stdout.strip() == "active"
 
-def log_change(bot, old_value, new_value, csv_file):
-    with open("optimizer_changes.log", "a") as f:
-        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] bot: {bot} | pôvodné PROFIT_LEVELS_HIGH: {old_value} | nové PROFIT_LEVELS_HIGH: {new_value} | zdroj logu: {csv_file}\n")
+def backup_cfg(cfg_file):
+    backup_file = cfg_file + ".bak"
+    shutil.copy2(cfg_file, backup_file)
+    return backup_file
 
+def restore_cfg(cfg_file, backup_file):
+    shutil.copy2(backup_file, cfg_file)
+
+# ===================== OPTIMALIZAČNÁ LOGIKA =====================
 def get_profit_change_last_30min(csv_file):
-    # Zistí zmenu total_usdc za posledných 30 minút
     rows = []
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f)
@@ -70,7 +73,6 @@ def get_profit_change_last_30min(csv_file):
         return 0.0
     rows.sort(key=lambda r: r['row_time'])
     now = rows[-1]['row_time']
-    # Najdi najnovší záznam starý aspoň 30 minút
     old_row = None
     for row in reversed(rows):
         if (now - row['row_time']).total_seconds() >= 1800:
@@ -84,75 +86,74 @@ def get_profit_change_last_30min(csv_file):
         profit_change = 0.0
     return profit_change
 
-def adjust_profit_levels(old_levels, profit_change):
-    # Automaticky upraví PROFIT_LEVELS_HIGH podľa zmeny portfólia
-    levels = [float(x) for x in old_levels.split(',')]
-    if profit_change > 0:
-        # Zvýš o 10 %
-        new_levels = [round(x * 1.1, 5) for x in levels]
-    elif profit_change < 0:
-        # Zníž o 10 %
-        new_levels = [round(x * 0.9, 5) for x in levels]
+def optimize_param(param, old_value, profit_change, rules):
+    levels = [float(x) for x in old_value.split(',')]
+    if profit_change > rules['profit_threshold']:
+        new_levels = [min(round(x * (1 + rules['increase_pct']/100), 5), rules['max_value']) for x in levels]
+        reason = f"profit +{profit_change:.2f}, zvýšenie o {rules['increase_pct']}%"
+    elif profit_change < -rules['profit_threshold']:
+        new_levels = [max(round(x * (1 - rules['decrease_pct']/100), 5), rules['min_value']) for x in levels]
+        reason = f"profit {profit_change:.2f}, zníženie o {rules['decrease_pct']}%"
     else:
         new_levels = levels
-    return ','.join(str(x) for x in new_levels)
+        reason = f"profit {profit_change:.2f}, bez zmeny"
+    return ','.join(str(x) for x in new_levels), reason
 
-def main():
-    for bot, info in BOTS.items():
-        log(f"--- Spracovanie {bot} ---")
-        # Skontroluj, či sú služby aktívne
-        trading_active = is_service_active(info['host'], info['user'], "trading-bot")
-        wallet_active = is_service_active(info['host'], info['user'], "wallet-status")
-        if not trading_active or not wallet_active:
-            log(f"[VAROVANIE] Služby trading-bot alebo wallet-status nie sú aktívne na {bot}. Preskakujem optimalizáciu.")
-            log(f"Stav trading-bot: {'aktívna' if trading_active else 'neaktívna'}, wallet-status: {'aktívna' if wallet_active else 'neaktívna'}")
-            log(f"--- Hotovo pre {bot} ---\n")
+# ===================== DEPLOYMENT =====================
+def deploy_cfg(bot, info, dry_run=False):
+    # 1. Stiahni log z bota
+    log(f"Sťahujem log z {bot}...")
+    res = subprocess.run([
+        "scp",
+        f"{info['user']}@{info['host']}:{info['remote_path']}{info['log']}",
+        f"./{bot}_{info['log']}"
+    ], capture_output=True, text=True)
+    if res.returncode != 0:
+        log(f"[CHYBA] SCP logu zlyhalo: {res.stderr.strip()}")
+        return False
+    log(f"Log úspešne stiahnutý.")
+    # 2. Vyhodnoť zmenu portfólia
+    profit_change = get_profit_change_last_30min(f"./{bot}_{info['log']}")
+    log(f"Zmena portfólia za posledných 30 minút: {profit_change}")
+    # 3. Optimalizuj parametre podľa pravidiel
+    config = configparser.ConfigParser()
+    config.read(info['cfg'])
+    changed = False
+    for param, rules in OPT_RULES.items():
+        old_value = config['BOT'].get(param, None)
+        if old_value is None:
             continue
-        # 1. Stiahni log z bota
-        log(f"Sťahujem log z {bot}...")
-        res = subprocess.run([
-            "scp",
-            f"{info['user']}@{info['host']}:{info['remote_path']}{info['log']}",
-            f"./{bot}_{info['log']}"
-        ], capture_output=True, text=True)
-        if res.returncode == 0:
-            log(f"Log úspešne stiahnutý.")
-        else:
-            log(f"[CHYBA] SCP logu zlyhalo: {res.stderr.strip()}")
-            continue
-        # 2. Vyhodnoť výsledky
-        try:
-            profit_change = get_profit_change_last_30min(f"./{bot}_{info['log']}")
-            log(f"Zmena portfólia za posledných 30 minút: {profit_change}")
-        except Exception as e:
-            log(f"[CHYBA] Vyhodnotenie zmeny portfólia zlyhalo: {e}")
-            continue
-        # 3. Uprav konfiguráciu podľa výsledku
-        config = configparser.ConfigParser()
-        config.read(info['cfg'])
-        old_value = config['BOT'].get('PROFIT_LEVELS_HIGH', 'N/A')
-        new_profit_levels = adjust_profit_levels(old_value, profit_change)
-        try:
-            update_cfg(info['cfg'], new_profit_levels)
-            log(f"Nová konfigurácia pre {bot} uložená.")
-            log_change(bot, old_value, new_profit_levels, f"./{bot}_{info['log']}")
-        except Exception as e:
-            log(f"[CHYBA] Ukladanie konfigurácie zlyhalo: {e}")
-            continue
-        # 4. Pošli novú konfiguráciu na bota
-        log(f"Uploadujem novú konfiguráciu na {bot}...")
+        new_value, reason = optimize_param(param, old_value, profit_change, rules)
+        if new_value != old_value:
+            changed = True
+            log_change(bot, param, old_value, new_value, f"./{bot}_{info['log']}", reason)
+            log(f"Optimalizované {param}: {old_value} -> {new_value} ({reason})")
+            if not dry_run:
+                config['BOT'][param] = new_value
+    if not changed:
+        log(f"Žiadna zmena parametrov pre {bot}.")
+        return True
+    # 4. Zálohuj pôvodný .cfg
+    if not dry_run:
+        backup_file = backup_cfg(info['cfg'])
+        log(f"Záloha konfigurácie: {backup_file}")
+        # 5. Ulož novú konfiguráciu
+        with open(info['cfg'], 'w') as f:
+            config.write(f)
+        log(f"Nová konfigurácia pre {bot} uložená.")
+        # 6. Upload na bota
         res = subprocess.run([
             "scp",
             info['cfg'],
             f"{info['user']}@{info['host']}:{info['remote_path']}{info['cfg']}"
         ], capture_output=True, text=True)
-        if res.returncode == 0:
-            log(f"Konfigurácia úspešne uploadovaná.")
-        else:
+        if res.returncode != 0:
             log(f"[CHYBA] SCP konfigurácie zlyhalo: {res.stderr.strip()}")
-            continue
-        # 5. Reštartuj bota cez SSH cez systemctl
-        log(f"Reštartujem bota na {bot}...")
+            restore_cfg(info['cfg'], backup_file)
+            log(f"Obnovená pôvodná konfigurácia zo zálohy.")
+            return False
+        log(f"Konfigurácia úspešne uploadovaná.")
+        # 7. Reštartuj bota
         res = subprocess.run([
             "ssh",
             f"{info['user']}@{info['host']}",
@@ -162,7 +163,25 @@ def main():
             log(f"{bot} reštartovaný s novou konfiguráciou.")
         else:
             log(f"[CHYBA] Reštart bota zlyhal: {res.stderr.strip()}")
+    return True
+
+# ===================== HLAVNÝ CYKLUS =====================
+def main(dry_run=False):
+    for bot, info in BOTS.items():
+        log(f"--- Spracovanie {bot} ---")
+        trading_active = is_service_active(info['host'], info['user'], "trading-bot")
+        wallet_active = is_service_active(info['host'], info['user'], "wallet-status")
+        if not trading_active or not wallet_active:
+            log(f"[VAROVANIE] Služby trading-bot alebo wallet-status nie sú aktívne na {bot}. Preskakujem optimalizáciu.")
+            log(f"Stav trading-bot: {'aktívna' if trading_active else 'neaktívna'}, wallet-status: {'aktívna' if wallet_active else 'neaktívna'}")
+            log(f"--- Hotovo pre {bot} ---\n")
+            continue
+        try:
+            deploy_cfg(bot, info, dry_run=dry_run)
+        except Exception as e:
+            log(f"[CHYBA] Optimalizácia/deployment zlyhal: {e}")
         log(f"--- Hotovo pre {bot} ---\n")
 
 if __name__ == "__main__":
-    main()
+    dry_run = '--dry-run' in sys.argv
+    main(dry_run=dry_run)
