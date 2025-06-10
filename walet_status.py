@@ -1,4 +1,5 @@
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
 import time
 import configparser
 import sys
@@ -15,14 +16,39 @@ api_config.read('api.cfg')
 api_key = api_config.get('API', 'API_KEY').strip('"')
 api_secret = api_config.get('API', 'API_SECRET').strip('"')
 
-client = Client(api_key, api_secret)
+def safe_client_init(api_key, api_secret, max_retries=5):
+    for i in range(max_retries):
+        try:
+            client = Client(api_key, api_secret)
+            # Nepoužívaj self.ping() v __init__!
+            return client
+        except BinanceAPIException as e:
+            if e.code == -1003:
+                wait = 30 * (i + 1)
+                print(f"API limit pri inicializácii, čakám {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Nepodarilo sa inicializovať Binance klienta kvôli API limitom.")
+
+client = safe_client_init(api_key, api_secret)
 
 def get_balance(asset_name="USDT"):
-    balances = client.get_account()['balances']
-    for asset in balances:
-        if asset['asset'] == asset_name:
-            return float(asset['free']) + float(asset['locked'])
-    return 0.0
+    for i in range(5):
+        try:
+            balances = client.get_account()['balances']
+            for asset in balances:
+                if asset['asset'] == asset_name:
+                    return float(asset['free']) + float(asset['locked'])
+            return 0.0
+        except BinanceAPIException as e:
+            if e.code == -1003:
+                wait = 30 * (i + 1)
+                print(f"API limit pri get_balance, čakám {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Nepodarilo sa získať balance kvôli API limitom.")
 
 def close_all_open_orders(symbol):
     open_orders = client.get_open_orders(symbol=symbol)
@@ -63,7 +89,7 @@ if __name__ == "__main__":
     symbol = "BTCUSDC"
     asset = "USDC"
     last_wallet_check = 0
-    wallet_check_interval = 30  # sekúnd
+    wallet_check_interval = 60  # sekúnd (zvýšené)
 
     prev_usdc = None
     prev_btc = None
@@ -87,9 +113,22 @@ if __name__ == "__main__":
 
         now = time.time()
         if now - last_wallet_check > wallet_check_interval:
-            usdc_balance = get_balance("USDC")
-            btc_balance = get_balance("BTC")
-            btc_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
+            for i in range(5):
+                try:
+                    usdc_balance = get_balance("USDC")
+                    btc_balance = get_balance("BTC")
+                    btc_price = float(client.get_symbol_ticker(symbol=symbol)['price'])
+                    break
+                except BinanceAPIException as e:
+                    if e.code == -1003:
+                        wait = 30 * (i + 1)
+                        print(f"API limit pri get_symbol_ticker, čakám {wait}s...")
+                        time.sleep(wait)
+                    else:
+                        raise
+            else:
+                print("Nepodarilo sa získať ceny ani po opakovaných pokusoch.")
+                continue
             total_usdc = usdc_balance + btc_balance * btc_price
 
             usdc_diff = ""
