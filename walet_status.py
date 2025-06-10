@@ -57,6 +57,8 @@ def log_to_csv(filename, data):
             writer.writerow(['datetime', 'config', 'status', 'usdc_balance', 'btc_balance', 'btc_price', 'total_usdc', 'note'])
         writer.writerow(data)
 
+MAIN_LOOP_INTERVAL = 60  # sekúnd, môžeš zvýšiť podľa potreby
+
 if __name__ == "__main__":
     symbol = "BTCUSDC"
     asset = "USDC"
@@ -125,4 +127,4 @@ if __name__ == "__main__":
             prev_btc = btc_balance
             last_wallet_check = now
 
-        time.sleep(1)
+        time.sleep(MAIN_LOOP_INTERVAL)
