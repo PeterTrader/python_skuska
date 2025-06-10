@@ -3,12 +3,17 @@ import csv
 import configparser
 import subprocess
 from datetime import datetime
+import sys
 
 # Nastavenie ciest a botov (prispôsob podľa reálneho nasadenia)
 BOTS = {
-    "bot1": {"host": "bot1_ip", "user": "user1", "cfg": "ema10_limit.cfg", "log": "wallet_log_ema10_limit.cfg.csv"},
-    "bot2": {"host": "bot2_ip", "user": "user2", "cfg": "ema10_limit.cfg", "log": "wallet_log_ema10_limit.cfg.csv"},
-    "bot3": {"host": "bot3_ip", "user": "user3", "cfg": "ema10_limit.cfg", "log": "wallet_log_ema10_limit.cfg.csv"},
+    "bot1": {
+        "host": "34.146.103.137",
+        "user": "traderpeter47",
+        "cfg": "ema10_limit.cfg",
+        "log": "wallet_log_ema10_limit.cfg.csv",
+        "remote_path": "/home/traderpeter47/python_skuska/"
+    },
     # Pridaj ďalšie boty podľa potreby
 }
 
@@ -33,35 +38,64 @@ def update_cfg(cfg_file, new_profit_levels):
     with open(cfg_file, 'w') as f:
         config.write(f)
 
+def log(msg):
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
+    sys.stdout.flush()
+
 def main():
     for bot, info in BOTS.items():
+        log(f"--- Spracovanie {bot} ---")
         # 1. Stiahni log z bota
-        print(f"[INFO] Sťahujem log z {bot}...")
-        subprocess.run([
+        log(f"Sťahujem log z {bot}...")
+        res = subprocess.run([
             "scp",
-            f"{info['user']}@{info['host']}:/cesta/na/bot/{info['log']}",
+            f"{info['user']}@{info['host']}:{info['remote_path']}{info['log']}",
             f"./{bot}_{info['log']}"
-        ])
+        ], capture_output=True, text=True)
+        if res.returncode == 0:
+            log(f"Log úspešne stiahnutý.")
+        else:
+            log(f"[CHYBA] SCP logu zlyhalo: {res.stderr.strip()}")
+            continue
         # 2. Vyhodnoť výsledky
-        best_profit = get_best_profit(f"./{bot}_{info['log']}")
-        print(f"{bot}: Najlepší profit: {best_profit}")
-        # 3. Uprav konfiguráciu podľa výsledku (príklad: zvýš PROFIT_LEVELS_HIGH)
+        try:
+            best_profit = get_best_profit(f"./{bot}_{info['log']}")
+            log(f"Najlepší profit: {best_profit}")
+        except Exception as e:
+            log(f"[CHYBA] Vyhodnotenie profitu zlyhalo: {e}")
+            continue
+        # 3. Uprav konfiguráciu podľa výsledku
         new_profit_levels = "0.018,0.021,0.024,0.027"  # Tu môžeš použiť vlastnú logiku
-        update_cfg(info['cfg'], new_profit_levels)
-        print(f"[INFO] Nová konfigurácia pre {bot} uložená.")
+        try:
+            update_cfg(info['cfg'], new_profit_levels)
+            log(f"Nová konfigurácia pre {bot} uložená.")
+        except Exception as e:
+            log(f"[CHYBA] Ukladanie konfigurácie zlyhalo: {e}")
+            continue
         # 4. Pošli novú konfiguráciu na bota
-        subprocess.run([
+        log(f"Uploadujem novú konfiguráciu na {bot}...")
+        res = subprocess.run([
             "scp",
             info['cfg'],
-            f"{info['user']}@{info['host']}:/cesta/na/bot/{info['cfg']}"
-        ])
-        # 5. Reštartuj bota cez SSH
-        subprocess.run([
+            f"{info['user']}@{info['host']}:{info['remote_path']}{info['cfg']}"
+        ], capture_output=True, text=True)
+        if res.returncode == 0:
+            log(f"Konfigurácia úspešne uploadovaná.")
+        else:
+            log(f"[CHYBA] SCP konfigurácie zlyhalo: {res.stderr.strip()}")
+            continue
+        # 5. Reštartuj bota cez SSH cez systemctl
+        log(f"Reštartujem bota na {bot}...")
+        res = subprocess.run([
             "ssh",
             f"{info['user']}@{info['host']}",
-            "pkill -f traiding.py && nohup python3 traiding.py ema10_limit.cfg &"
-        ])
-        print(f"[INFO] {bot} reštartovaný s novou konfiguráciou.")
+            "sudo systemctl restart trading-bot"
+        ], capture_output=True, text=True)
+        if res.returncode == 0:
+            log(f"{bot} reštartovaný s novou konfiguráciou.")
+        else:
+            log(f"[CHYBA] Reštart bota zlyhal: {res.stderr.strip()}")
+        log(f"--- Hotovo pre {bot} ---\n")
 
 if __name__ == "__main__":
     main()
