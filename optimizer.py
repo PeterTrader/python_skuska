@@ -50,6 +50,53 @@ def is_service_active(host, user, service):
     ], capture_output=True, text=True)
     return res.returncode == 0 and res.stdout.strip() == "active"
 
+def log_change(bot, old_value, new_value, csv_file):
+    with open("optimizer_changes.log", "a") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] bot: {bot} | pôvodné PROFIT_LEVELS_HIGH: {old_value} | nové PROFIT_LEVELS_HIGH: {new_value} | zdroj logu: {csv_file}\n")
+
+def get_profit_change_last_30min(csv_file):
+    # Zistí zmenu total_usdc za posledných 30 minút
+    rows = []
+    with open(csv_file, newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                row_time = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
+                row['row_time'] = row_time
+                rows.append(row)
+            except Exception:
+                continue
+    if not rows:
+        return 0.0
+    rows.sort(key=lambda r: r['row_time'])
+    now = rows[-1]['row_time']
+    # Najdi najnovší záznam starý aspoň 30 minút
+    old_row = None
+    for row in reversed(rows):
+        if (now - row['row_time']).total_seconds() >= 1800:
+            old_row = row
+            break
+    if not old_row:
+        old_row = rows[0]
+    try:
+        profit_change = float(rows[-1]['total_usdc']) - float(old_row['total_usdc'])
+    except Exception:
+        profit_change = 0.0
+    return profit_change
+
+def adjust_profit_levels(old_levels, profit_change):
+    # Automaticky upraví PROFIT_LEVELS_HIGH podľa zmeny portfólia
+    levels = [float(x) for x in old_levels.split(',')]
+    if profit_change > 0:
+        # Zvýš o 10 %
+        new_levels = [round(x * 1.1, 5) for x in levels]
+    elif profit_change < 0:
+        # Zníž o 10 %
+        new_levels = [round(x * 0.9, 5) for x in levels]
+    else:
+        new_levels = levels
+    return ','.join(str(x) for x in new_levels)
+
 def main():
     for bot, info in BOTS.items():
         log(f"--- Spracovanie {bot} ---")
@@ -75,16 +122,20 @@ def main():
             continue
         # 2. Vyhodnoť výsledky
         try:
-            best_profit = get_best_profit(f"./{bot}_{info['log']}")
-            log(f"Najlepší profit: {best_profit}")
+            profit_change = get_profit_change_last_30min(f"./{bot}_{info['log']}")
+            log(f"Zmena portfólia za posledných 30 minút: {profit_change}")
         except Exception as e:
-            log(f"[CHYBA] Vyhodnotenie profitu zlyhalo: {e}")
+            log(f"[CHYBA] Vyhodnotenie zmeny portfólia zlyhalo: {e}")
             continue
         # 3. Uprav konfiguráciu podľa výsledku
-        new_profit_levels = "0.018,0.021,0.024,0.027"  # Tu môžeš použiť vlastnú logiku
+        config = configparser.ConfigParser()
+        config.read(info['cfg'])
+        old_value = config['BOT'].get('PROFIT_LEVELS_HIGH', 'N/A')
+        new_profit_levels = adjust_profit_levels(old_value, profit_change)
         try:
             update_cfg(info['cfg'], new_profit_levels)
             log(f"Nová konfigurácia pre {bot} uložená.")
+            log_change(bot, old_value, new_profit_levels, f"./{bot}_{info['log']}")
         except Exception as e:
             log(f"[CHYBA] Ukladanie konfigurácie zlyhalo: {e}")
             continue
