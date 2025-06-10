@@ -81,6 +81,10 @@ def log_change(bot, param, old_value, new_value, csv_file, reason):
     with open("optimizer_changes.log", "a") as f:
         f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] bot: {bot} | param: {param} | pôvodné: {old_value} | nové: {new_value} | zdroj logu: {csv_file} | dôvod: {reason}\n")
 
+def log_run(dry_run, bots):
+    with open("optimizer_run.log", "a") as f:
+        f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] dry_run: {dry_run} | bots: {', '.join(bots)}\n")
+
 # ===================== NÁSTROJE =====================
 def is_service_active(host, user, service):
     res = subprocess.run([
@@ -237,6 +241,7 @@ def deploy_cfg(bot, info, dry_run=False):
 
 # ===================== HLAVNÝ CYKLUS =====================
 def main(dry_run=False):
+    log_run(dry_run, list(BOTS.keys()))
     for bot, info in BOTS.items():
         log(f"--- Spracovanie {bot} ---")
         trading_active = is_service_active(info['host'], info['user'], "trading-bot")
