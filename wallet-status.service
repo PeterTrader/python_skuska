@@ -1,0 +1,12 @@
+[Unit]
+Description=Wallet Status Bot
+After=network.target
+
+[Service]
+User=brano
+WorkingDirectory=/home/brano/Documents/python_skuska
+ExecStart=/home/brano/Documents/python_skuska/venv/bin/python walet_status.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
