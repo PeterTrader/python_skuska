@@ -1,5 +1,6 @@
 import logging
 from binance.client import Client
+from binance.exceptions import BinanceAPIException
 import time
 import threading
 import concurrent.futures
@@ -45,7 +46,23 @@ profit_multipliers = [float(x) for x in config.get('BOT', 'TRAILING_OFFSET_PROFI
 EMA_PERIOD = int(config.get('BOT', 'EMA_PERIOD', fallback='20'))
 
 
-client = Client(api_key, api_secret)
+def safe_client_init(api_key, api_secret, max_retries=5):
+    for i in range(max_retries):
+        try:
+            client = Client(api_key, api_secret)
+            # Nepoužívaj self.ping() v __init__!
+            return client
+        except BinanceAPIException as e:
+            if e.code == -1003:
+                wait = 30 * (i + 1)
+                print(f"API limit pri inicializácii, čakám {wait}s...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("Nepodarilo sa inicializovať Binance klienta kvôli API limitom.")
+
+client = safe_client_init(api_key, api_secret)
+
 order_lock = threading.Lock()
 
 # --- GLOBÁLNE PREMENNÉ ---
@@ -65,8 +82,8 @@ BUY_SELL_RATIO = int(config.get('BOT', 'BUY_SELL_RATIO', fallback='4'))
 trade_counter = 0
 dynamic_buy_sell_ratio = BUY_SELL_RATIO  # dynamická hodnota
 
-# Nastav interval hlavného cyklu (napr. 60 sekúnd alebo viac podľa API limitu)
-MAIN_LOOP_INTERVAL = 60  # sekúnd (prispôsob podľa potreby)
+# Nastav interval hlavného cyklu (napr. 120 sekúnd alebo viac podľa API limitu)
+MAIN_LOOP_INTERVAL = 120  # sekúnd (prispôsob podľa potreby)
 
 # --- POMOCNÉ FUNKCIE ---
 
@@ -512,7 +529,7 @@ while True:
         logging.info(">>> Začiatok hlavného cyklu")
 
         # Sync open orders len každých 10 sekúnd
-        if time.time() - last_sync > 10:
+        if time.time() - last_sync > 120:
             sync_open_orders()
             last_sync = time.time()
 
@@ -588,8 +605,8 @@ while True:
                     last_trade_time = now
             trade_counter += 1
 
-         #Výpis reálnych objednávok len každých 30 sekúnd
-        if time.time() - last_monitor > 30:
+         #Výpis reálnych objednávok len každých 120 sekúnd
+        if time.time() - last_monitor > 120:
             print_orders_status_detail()
             last_monitor = time.time()
 
