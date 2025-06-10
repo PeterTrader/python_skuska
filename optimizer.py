@@ -16,7 +16,48 @@ OPT_RULES = {
         'min_value': 0.001,        # Minimálna povolená hodnota
         'max_value': 1.0           # Maximálna povolená hodnota
     },
-    # Pridaj ďalšie parametre podľa potreby
+    'PROFIT_LEVELS_MED': {
+        'profit_threshold': 0,
+        'increase_pct': 10,
+        'decrease_pct': 10,
+        'min_value': 0.001,
+        'max_value': 1.0
+    },
+    'PROFIT_LEVELS_LOW': {
+        'profit_threshold': 0,
+        'increase_pct': 10,
+        'decrease_pct': 10,
+        'min_value': 0.001,
+        'max_value': 1.0
+    },
+    'LOSS_LIMIT_HIGH': {
+        'profit_threshold': 0,
+        'increase_pct': 5,
+        'decrease_pct': 5,
+        'min_value': 0.0001,
+        'max_value': 0.1
+    },
+    'LOSS_LIMIT_MED': {
+        'profit_threshold': 0,
+        'increase_pct': 5,
+        'decrease_pct': 5,
+        'min_value': 0.0001,
+        'max_value': 0.1
+    },
+    'LOSS_LIMIT_LOW': {
+        'profit_threshold': 0,
+        'increase_pct': 5,
+        'decrease_pct': 5,
+        'min_value': 0.0001,
+        'max_value': 0.1
+    },
+    'EMA_PERIOD': {
+        'profit_threshold': 0,
+        'increase_step': 1,
+        'decrease_step': 1,
+        'min_value': 5,
+        'max_value': 100
+    }
 }
 
 # ===================== NASTAVENIE BOTOV =====================
@@ -87,17 +128,46 @@ def get_profit_change_last_30min(csv_file):
     return profit_change
 
 def optimize_param(param, old_value, profit_change, rules):
-    levels = [float(x) for x in old_value.split(',')]
-    if profit_change > rules['profit_threshold']:
-        new_levels = [min(round(x * (1 + rules['increase_pct']/100), 5), rules['max_value']) for x in levels]
-        reason = f"profit +{profit_change:.2f}, zvýšenie o {rules['increase_pct']}%"
-    elif profit_change < -rules['profit_threshold']:
-        new_levels = [max(round(x * (1 - rules['decrease_pct']/100), 5), rules['min_value']) for x in levels]
-        reason = f"profit {profit_change:.2f}, zníženie o {rules['decrease_pct']}%"
+    # Rozlíš, či je to zoznam (oddelený čiarkou) alebo jedno číslo
+    if param.startswith('PROFIT_LEVELS'):
+        levels = [float(x) for x in old_value.split(',')]
+        if profit_change > rules['profit_threshold']:
+            new_levels = [min(round(x * (1 + rules['increase_pct']/100), 5), rules['max_value']) for x in levels]
+            reason = f"profit +{profit_change:.2f}, zvýšenie o {rules['increase_pct']}%"
+        elif profit_change < -rules['profit_threshold']:
+            new_levels = [max(round(x * (1 - rules['decrease_pct']/100), 5), rules['min_value']) for x in levels]
+            reason = f"profit {profit_change:.2f}, zníženie o {rules['decrease_pct']}%"
+        else:
+            new_levels = levels
+            reason = f"profit {profit_change:.2f}, bez zmeny"
+        return ','.join(str(x) for x in new_levels), reason
+    elif param.startswith('LOSS_LIMIT'):
+        val = float(old_value)
+        if profit_change > rules['profit_threshold']:
+            new_val = min(round(val * (1 + rules['increase_pct']/100), 5), rules['max_value'])
+            reason = f"profit +{profit_change:.2f}, zvýšenie o {rules['increase_pct']}%"
+        elif profit_change < -rules['profit_threshold']:
+            new_val = max(round(val * (1 - rules['decrease_pct']/100), 5), rules['min_value'])
+            reason = f"profit {profit_change:.2f}, zníženie o {rules['decrease_pct']}%"
+        else:
+            new_val = val
+            reason = f"profit {profit_change:.2f}, bez zmeny"
+        return str(new_val), reason
+    elif param == 'EMA_PERIOD':
+        val = int(float(old_value))
+        if profit_change > rules['profit_threshold']:
+            new_val = min(val + rules['increase_step'], rules['max_value'])
+            reason = f"profit +{profit_change:.2f}, zvýšenie o {rules['increase_step']}"
+        elif profit_change < -rules['profit_threshold']:
+            new_val = max(val - rules['decrease_step'], rules['min_value'])
+            reason = f"profit {profit_change:.2f}, zníženie o {rules['decrease_step']}"
+        else:
+            new_val = val
+            reason = f"profit {profit_change:.2f}, bez zmeny"
+        return str(new_val), reason
     else:
-        new_levels = levels
-        reason = f"profit {profit_change:.2f}, bez zmeny"
-    return ','.join(str(x) for x in new_levels), reason
+        # fallback: nemen parametre, ktoré nepoznáme
+        return old_value, "neoptimalizované"
 
 # ===================== DEPLOYMENT =====================
 def deploy_cfg(bot, info, dry_run=False):
