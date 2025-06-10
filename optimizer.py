@@ -42,9 +42,25 @@ def log(msg):
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}")
     sys.stdout.flush()
 
+def is_service_active(host, user, service):
+    res = subprocess.run([
+        "ssh",
+        f"{user}@{host}",
+        f"systemctl is-active {service}"
+    ], capture_output=True, text=True)
+    return res.returncode == 0 and res.stdout.strip() == "active"
+
 def main():
     for bot, info in BOTS.items():
         log(f"--- Spracovanie {bot} ---")
+        # Skontroluj, či sú služby aktívne
+        trading_active = is_service_active(info['host'], info['user'], "trading-bot")
+        wallet_active = is_service_active(info['host'], info['user'], "wallet-status")
+        if not trading_active or not wallet_active:
+            log(f"[VAROVANIE] Služby trading-bot alebo wallet-status nie sú aktívne na {bot}. Preskakujem optimalizáciu.")
+            log(f"Stav trading-bot: {'aktívna' if trading_active else 'neaktívna'}, wallet-status: {'aktívna' if wallet_active else 'neaktívna'}")
+            log(f"--- Hotovo pre {bot} ---\n")
+            continue
         # 1. Stiahni log z bota
         log(f"Sťahujem log z {bot}...")
         res = subprocess.run([
