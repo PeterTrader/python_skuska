@@ -3,9 +3,9 @@ Description=Wallet Status Bot
 After=network.target
 
 [Service]
-User=brano
-WorkingDirectory=/home/brano/Documents/python_skuska
-ExecStart=/home/brano/Documents/python_skuska/venv/bin/python walet_status.py
+User=traderpeter47
+WorkingDirectory=/home/traderpeter47/Documents/python_skuska
+ExecStart=/home/traderpeter47/Documents/python_skuska/venv/bin/python /home/traderpeter47/Documents/python_skuska/walet_status.py
 Restart=always
 
 [Install]

@@ -65,6 +65,9 @@ BUY_SELL_RATIO = int(config.get('BOT', 'BUY_SELL_RATIO', fallback='4'))
 trade_counter = 0
 dynamic_buy_sell_ratio = BUY_SELL_RATIO  # dynamická hodnota
 
+# Nastav interval hlavného cyklu (napr. 60 sekúnd alebo viac podľa API limitu)
+MAIN_LOOP_INTERVAL = 60  # sekúnd (prispôsob podľa potreby)
+
 # --- POMOCNÉ FUNKCIE ---
 
 def get_step_size_once(symbol):
@@ -594,8 +597,7 @@ while True:
 
         print_orders_summary()
 
-        time.sleep(0.5)
-
+        time.sleep(MAIN_LOOP_INTERVAL)
     except Exception as e:
         print(f"\033[91mChyba v hlavnom cykle: {e}\033[0m")
         logging.error(f"Chyba v hlavnom cykle: {e}")

@@ -9,7 +9,7 @@ API_SECRET = "VLOZ_SVOJ_MASTER_API_SECRET"
 client = Client(API_KEY, API_SECRET)
 
 # Ako často kontrolovať subúčty (v sekundách)
-CHECK_INTERVAL = 1800  # 30 minút
+CHECK_INTERVAL = 3600  # 60 minút (zvýšené kvôli API limitu)
 
 # Zoznam subúčtov (emaily alebo iné identifikátory)
 # Ak chceš dynamicky, môžeš použiť client.get_sub_account_list()
