@@ -198,9 +198,10 @@ def deploy_cfg(bot, info, dry_run=False):
         if old_value is None:
             continue
         new_value, reason = optimize_param(param, old_value, profit_change, rules)
+        # Loguj VŽDY, aj keď sa hodnota nezmení
+        log_change(bot, param, old_value, new_value, f"./{bot}_{info['log']}", reason)
         if new_value != old_value:
             changed = True
-            log_change(bot, param, old_value, new_value, f"./{bot}_{info['log']}", reason)
             log(f"Optimalizované {param}: {old_value} -> {new_value} ({reason})")
             if not dry_run:
                 config['BOT'][param] = new_value
