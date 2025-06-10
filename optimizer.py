@@ -131,6 +131,24 @@ def get_profit_change_last_30min(csv_file):
         profit_change = 0.0
     return profit_change
 
+def no_trade_in_last_minutes(csv_file, minutes=60):
+    rows = []
+    with open(csv_file, newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                row_time = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
+                row['row_time'] = row_time
+                rows.append(row)
+            except Exception:
+                continue
+    if not rows:
+        return True  # nikdy nebol obchod
+    rows.sort(key=lambda r: r['row_time'])
+    now = rows[-1]['row_time']
+    # Ak posledný obchod je starší ako X minút, vráť True
+    return (now < datetime.now() - timedelta(minutes=minutes))
+
 def optimize_param(param, old_value, profit_change, rules):
     # Rozlíš, či je to zoznam (oddelený čiarkou) alebo jedno číslo
     if param.startswith('PROFIT_LEVELS'):
@@ -189,10 +207,25 @@ def deploy_cfg(bot, info, dry_run=False):
     # 2. Vyhodnoť zmenu portfólia
     profit_change = get_profit_change_last_30min(f"./{bot}_{info['log']}")
     log(f"Zmena portfólia za posledných 30 minút: {profit_change}")
-    # 3. Optimalizuj parametre podľa pravidiel
+    # 2b. Skontroluj stagnáciu a prípadne zníž EMA_PERIOD
+    stagnation = no_trade_in_last_minutes(f"./{bot}_{info['log']}", minutes=60)
     config = configparser.ConfigParser()
     config.read(info['cfg'])
     changed = False
+    ema_changed = False
+    if stagnation:
+        old_ema = config['BOT'].get('EMA_PERIOD', None)
+        if old_ema is not None:
+            old_ema = int(float(old_ema))
+            if old_ema > 5:
+                new_ema = old_ema - 1
+                log_change(bot, 'EMA_PERIOD', old_ema, new_ema, f"./{bot}_{info['log']}", "dlhá stagnácia, znižujem EMA_PERIOD")
+                log(f"Dlhá stagnácia: EMA_PERIOD {old_ema} -> {new_ema}")
+                if not dry_run:
+                    config['BOT']['EMA_PERIOD'] = str(new_ema)
+                changed = True
+                ema_changed = True
+    # 3. Optimalizuj parametre podľa pravidiel
     for param, rules in OPT_RULES.items():
         old_value = config['BOT'].get(param, None)
         if old_value is None:
@@ -205,6 +238,9 @@ def deploy_cfg(bot, info, dry_run=False):
             log(f"Optimalizované {param}: {old_value} -> {new_value} ({reason})")
             if not dry_run:
                 config['BOT'][param] = new_value
+            # Ak EMA_PERIOD sa zvýši späť na pôvodnú hodnotu, upozorni do logu
+            if param == 'EMA_PERIOD' and not ema_changed and int(float(new_value)) > int(float(old_value)):
+                log(f"EMA_PERIOD zvýšený z {old_value} na {new_value} (trh sa rozbehol)")
     if not changed:
         log(f"Žiadna zmena parametrov pre {bot}.")
         return True
